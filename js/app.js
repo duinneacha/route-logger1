@@ -138,6 +138,38 @@ function blankNote(extra) {
   };
 }
 
+function foldWords(text) {
+  return text.replace(/\s+/g, " ").trim();
+}
+
+function mergeSpeech(existing, incoming) {
+  const next = foldWords(incoming);
+  const prev = foldWords(existing);
+  if (!prev) return next;
+  if (!next) return prev;
+  const prevFold = prev.toLowerCase();
+  const nextFold = next.toLowerCase();
+  if (nextFold === prevFold || prevFold.endsWith(` ${nextFold}`)) return prev;
+  if (nextFold.startsWith(prevFold)) return next;
+  if (prevFold.startsWith(nextFold)) return prev;
+  const words = next.split(" ").filter(Boolean).length;
+  if (words <= 3) return `${prev} ${next}`;
+  return `${prev}\n${next}`;
+}
+
+function tidySpeech(text) {
+  if (!text) return "";
+  return text.split(/\n+/).reduce((combined, line) => mergeSpeech(combined, line), "");
+}
+
+function formatPlace(lat, lng) {
+  const north = lat >= 0 ? "N" : "S";
+  const east = lng >= 0 ? "E" : "W";
+  const latitude = `${Math.abs(lat).toFixed(5)}° ${north}`;
+  const longitude = `${Math.abs(lng).toFixed(5)}° ${east}`;
+  return `${latitude}, ${longitude}`;
+}
+
 function queuePhrase(text) {
   const phrase = text.trim();
   if (!phrase || !round || round.endedAt) return;
@@ -153,10 +185,7 @@ function queuePhrase(text) {
 async function commitPhrase(noteId, phrase) {
   const note = notes.find((item) => item.id === noteId);
   if (!note || !round || round.endedAt) return;
-  const lines = note.text ? note.text.split("\n") : [];
-  if (lines[lines.length - 1] !== phrase) {
-    note.text = note.text ? `${note.text}\n${phrase}` : phrase;
-  }
+  note.text = mergeSpeech(note.text, phrase);
   if (note.lat == null) {
     const pin = talkPin || (await tracker.current());
     if (pin) Object.assign(note, pinFields(pin));
@@ -188,6 +217,13 @@ function screenCameBack() {
 
 async function loadNotes() {
   notes = round ? await notesForRound(round.id) : [];
+  await Promise.all(notes.map(async (note) => {
+    const tidy = tidySpeech(note.text);
+    if (tidy !== note.text) {
+      note.text = tidy;
+      await putNote(note);
+    }
+  }));
 }
 
 function showDock(mode) {
@@ -355,11 +391,14 @@ function renderNote(note) {
   }
 
   if (note.lat != null && note.lng != null) {
+    const place = formatPlace(note.lat, note.lng);
     const link = document.createElement("a");
+    link.className = "place";
     link.href = `https://www.google.com/maps?q=${note.lat},${note.lng}`;
     link.target = "_blank";
     link.rel = "noopener noreferrer";
-    link.textContent = "Open in Google Maps";
+    link.textContent = place;
+    link.setAttribute("aria-label", `${place}. Open in Google Maps`);
     article.append(link);
   }
 
@@ -444,7 +483,7 @@ function exportText() {
     lines.push(timeFormat.format(note.at));
     lines.push(note.text || "Photo");
     if (note.lat != null && note.lng != null) {
-      lines.push(`${note.lat}, ${note.lng}`);
+      lines.push(formatPlace(note.lat, note.lng));
       lines.push(`https://www.google.com/maps?q=${note.lat},${note.lng}`);
     }
     if (note.photo) lines.push("Photo attached");
