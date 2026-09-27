@@ -1,4 +1,4 @@
-const CACHE = "route-notes-v4";
+const CACHE = "route-notes-v5";
 const ASSETS = [
   "./",
   "./index.html",
@@ -7,6 +7,8 @@ const ASSETS = [
   "./js/db.js",
   "./js/geo.js",
   "./js/speech.js",
+  "./js/record.js",
+  "./js/transcribe.js",
   "./manifest.webmanifest",
   "./icons/icon-192.png",
   "./icons/icon-512.png",
@@ -35,22 +37,23 @@ self.addEventListener("fetch", (event) => {
   if (url.origin !== self.location.origin) return;
 
   event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          caches.open(CACHE).then((cache) => cache.put(event.request, copy));
-        }
-        return response;
-      })
-      .catch(async () => {
-        const cache = await caches.open(CACHE);
-        const cached = await cache.match(event.request);
-        if (cached) return cached;
-        if (event.request.mode === "navigate") {
-          return cache.match("./index.html");
-        }
-        return new Response("Offline", { status: 503, statusText: "Offline" });
-      })
+    (async () => {
+      const cache = await caches.open(CACHE);
+      const cached = await cache.match(event.request);
+      const refresh = fetch(event.request)
+        .then((response) => {
+          if (response.ok) cache.put(event.request, response.clone());
+          return response;
+        })
+        .catch(() => null);
+      if (cached) return cached;
+      const response = await refresh;
+      if (response) return response;
+      if (event.request.mode === "navigate") {
+        const shell = await cache.match("./index.html");
+        if (shell) return shell;
+      }
+      return new Response("Offline", { status: 503, statusText: "Offline" });
+    })()
   );
 });

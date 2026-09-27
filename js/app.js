@@ -1,6 +1,8 @@
-import { allRounds, deleteNote, notesForRound, putNote, putRound } from "./db.js";
+import { allNotes, allRounds, deleteNote, notesForRound, putNote, putRound } from "./db.js";
 import { createTracker } from "./geo.js";
+import { createRecorder, recorderSupported } from "./record.js";
 import { createSpeech, speechSupported } from "./speech.js";
+import { transcribeBlob } from "./transcribe.js";
 
 const titleEl = document.querySelector("#title");
 const statusEl = document.querySelector("#status");
@@ -32,6 +34,11 @@ let talkNoteId = null;
 let talkPin = null;
 let talkGeneration = 0;
 let photoTargetId = null;
+let recordingOffline = false;
+let writingOut = false;
+let transcribeBusy = false;
+let micBlocked = false;
+const waitingText = "Waiting to write this out.";
 let phraseChain = Promise.resolve();
 let roundWrite = Promise.resolve();
 let startingRound = false;
@@ -51,6 +58,8 @@ const tracker = createTracker({
   },
 });
 
+const recorder = createRecorder();
+
 const speech = createSpeech({
   onPhrase: (text) => queuePhrase(text),
   onInterim: (text) => {
@@ -64,17 +73,12 @@ const speech = createSpeech({
       consentEl.textContent = "Listening. Press the side button to end this talk.";
       return;
     }
-    speakBtn.textContent = "Speak";
-    speakBtn.setAttribute("aria-pressed", "false");
-    liveEl.hidden = true;
-    liveEl.textContent = "";
-    if (state === "denied") {
-      consentEl.textContent = "Microphone is blocked. Allow it in the browser settings.";
-    } else if (state === "unsupported") {
-      consentEl.textContent = "Speaking needs Chrome. You can still type a note.";
-    } else {
-      consentEl.textContent = "Ask the person with you before you use the microphone.";
+    if (state === "network") {
+      startOfflineRecording().catch(showFailure);
+      return;
     }
+    if (state === "denied") micBlocked = true;
+    refreshConsent();
   },
 });
 
@@ -133,6 +137,8 @@ function blankNote(extra) {
     text: "",
     at: Date.now(),
     photo: null,
+    audio: null,
+    pendingText: false,
     ...pinFields(talkPin),
     ...extra,
   };
@@ -186,6 +192,8 @@ async function commitPhrase(noteId, phrase) {
   const note = notes.find((item) => item.id === noteId);
   if (!note || !round || round.endedAt) return;
   note.text = mergeSpeech(note.text, phrase);
+  note.pendingText = false;
+  note.audio = null;
   if (note.lat == null) {
     const pin = talkPin || (await tracker.current());
     if (pin) Object.assign(note, pinFields(pin));
@@ -194,16 +202,102 @@ async function commitPhrase(noteId, phrase) {
   if (editingId !== note.id) renderNotes();
 }
 
+function visibleText(note) {
+  if (note.text) return note.text;
+  if (note.pendingText) return waitingText;
+  return "";
+}
+
+function refreshConsent() {
+  if (consentEl.hidden || speech.listening()) return;
+  if (recordingOffline) {
+    speakBtn.textContent = "Stop";
+    speakBtn.setAttribute("aria-pressed", "true");
+    consentEl.textContent = "No signal. Press the side button to end this talk.";
+    return;
+  }
+  speakBtn.textContent = "Speak";
+  speakBtn.setAttribute("aria-pressed", "false");
+  liveEl.hidden = true;
+  liveEl.textContent = "";
+  if (writingOut) {
+    consentEl.textContent = "Writing out saved talks.";
+    return;
+  }
+  if (micBlocked) {
+    consentEl.textContent = "Microphone is blocked. Allow it in the browser settings.";
+    return;
+  }
+  if (!navigator.onLine) {
+    consentEl.textContent = "No signal. Speaking will be written out when you are back in range. You can type a note now.";
+    return;
+  }
+  if (!speechSupported() && !recorderSupported()) {
+    consentEl.textContent = "Speaking needs Chrome. You can still type a note.";
+    return;
+  }
+  consentEl.textContent = "Ask the person with you before you use the microphone.";
+}
+
+async function startOfflineRecording() {
+  if (recordingOffline || recorder.listening() || document.hidden) return;
+  if (!recorderSupported()) {
+    consentEl.textContent = "Speaking needs Chrome. You can still type a note.";
+    return;
+  }
+  try {
+    await recorder.start();
+  } catch {
+    micBlocked = true;
+    refreshConsent();
+    return;
+  }
+  if (document.hidden) {
+    await keepAudioIfNeeded(await recorder.stop(), talkNoteId, talkPin);
+    recordingOffline = false;
+    refreshConsent();
+    return;
+  }
+  recordingOffline = true;
+  refreshConsent();
+}
+
+async function keepAudioIfNeeded(blob, noteId, pin) {
+  if (!blob || !round || round.endedAt) return;
+  let note = notes.find((item) => item.id === noteId);
+  if (note && note.text) return;
+  if (!note) {
+    note = blankNote({ ...pinFields(pin) });
+    notes.push(note);
+  } else if (note.lat == null && pin) {
+    Object.assign(note, pinFields(pin));
+  }
+  note.audio = blob;
+  note.pendingText = true;
+  await putNote(note);
+  if (round && note.roundId === round.id) renderNotes();
+}
+
 function endTalk() {
-  if (!speech.listening()) return;
+  const wasSpeech = speech.listening();
+  const wasRecording = recorder.listening();
+  if (!wasSpeech && !wasRecording) return;
   const generation = talkGeneration;
-  speech.stop();
-  phraseChain = phraseChain.then(() => {
-    if (talkGeneration === generation) {
-      talkNoteId = null;
-      talkPin = null;
-    }
-  });
+  const noteId = talkNoteId;
+  const pin = talkPin;
+  recordingOffline = false;
+  if (wasSpeech) speech.stop();
+  const audioDone = wasRecording ? recorder.stop() : Promise.resolve(null);
+  phraseChain = phraseChain
+    .then(async () => {
+      await keepAudioIfNeeded(await audioDone, noteId, pin);
+      if (talkGeneration === generation) {
+        talkNoteId = null;
+        talkPin = null;
+      }
+      refreshConsent();
+    })
+    .catch(showFailure);
 }
 
 function screenWentAway() {
@@ -258,8 +352,9 @@ async function showHome() {
   editingId = null;
   const rounds = await allRounds();
   const unfinished = rounds.find((item) => !item.endedAt);
-  if (unfinished) {
+    if (unfinished) {
     await openExisting(unfinished);
+    transcribePending();
     return;
   }
   round = null;
@@ -275,6 +370,7 @@ async function showHome() {
   mainEl.append(lead);
 
   const finished = rounds.filter((item) => item.endedAt);
+  transcribePending();
   if (!finished.length) return;
 
   const list = document.createElement("ul");
@@ -302,6 +398,7 @@ async function openExisting(existing) {
   if (!viewingPast) tracker.start();
   else tracker.stop();
   renderNotes();
+  refreshConsent();
 }
 
 async function beginRound() {
@@ -326,6 +423,7 @@ async function beginRound() {
   paintStatus();
   showDock("active");
   renderNotes();
+  refreshConsent();
 }
 
 async function finishRound() {
@@ -401,15 +499,23 @@ function renderNote(note) {
   if (editingId === note.id) {
     const field = document.createElement("textarea");
     field.rows = 4;
-    field.value = note.text;
+    field.value = visibleText(note);
     field.setAttribute("aria-label", "Note");
     field.addEventListener("blur", () => saveEdit(note.id, field.value));
     article.append(field);
     queueMicrotask(() => field.focus());
   } else {
-    if (!note.text) return article;
+    const body = visibleText(note);
+    if (!body) {
+      if (!note.photo) {
+        const place = renderPlace(note);
+        if (place) article.append(place);
+      }
+      return article;
+    }
     const paragraph = document.createElement("p");
-    paragraph.textContent = note.text;
+    if (!note.text && note.pendingText) paragraph.className = "pending";
+    paragraph.textContent = body;
     paragraph.tabIndex = 0;
     paragraph.addEventListener("click", () => {
       editingId = note.id;
@@ -469,11 +575,19 @@ async function saveEdit(id, value) {
   editingId = null;
   if (!note) return;
   const text = value.trim();
-  if (!text && !note.photo) {
+  if (note.pendingText && (!text || text === waitingText)) {
+    renderNotes();
+    return;
+  }
+  if (!text && !note.photo && !note.audio) {
     notes = notes.filter((item) => item.id !== id);
     await deleteNote(id);
   } else {
     note.text = text;
+    if (text) {
+      note.pendingText = false;
+      note.audio = null;
+    }
     await putNote(note);
   }
   renderNotes();
@@ -502,7 +616,7 @@ function exportText() {
   lines.push("");
   notes.forEach((note) => {
     lines.push(timeFormat.format(note.at));
-    lines.push(note.text || "Photo");
+    lines.push(visibleText(note) || "Photo");
     if (note.lat != null && note.lng != null) {
       lines.push(formatPlace(note.lat, note.lng));
       lines.push(`https://www.google.com/maps?q=${note.lat},${note.lng}`);
@@ -649,15 +763,60 @@ function openComposer() {
 function closeComposer() {
   composerEl.hidden = true;
   if (round && !round.endedAt) showDock("active");
+  refreshConsent();
+}
+
+async function transcribePending() {
+  if (!navigator.onLine || transcribeBusy || recordingOffline || speech.listening()) return;
+  transcribeBusy = true;
+  try {
+    const stored = await allNotes();
+    const pending = stored.filter((item) => item.pendingText && item.audio);
+    if (!pending.length) return;
+    writingOut = true;
+    refreshConsent();
+    for (const storedNote of pending) {
+      if (!navigator.onLine) break;
+      let text = "";
+      try {
+        text = await transcribeBlob(storedNote.audio);
+      } catch {
+        consentEl.hidden = false;
+        consentEl.textContent = "Saved talks will be written out when you are back in range.";
+        break;
+      }
+      const live = notes.find((item) => item.id === storedNote.id);
+      const note = live || storedNote;
+      if (!note.pendingText || note.text) continue;
+      note.pendingText = false;
+      note.audio = null;
+      if (text) note.text = text;
+      if (!text && !note.photo) {
+        if (live) notes = notes.filter((item) => item.id !== note.id);
+        await deleteNote(note.id);
+      } else {
+        await putNote(note);
+      }
+      if (live) renderNotes();
+    }
+  } finally {
+    writingOut = false;
+    transcribeBusy = false;
+    refreshConsent();
+  }
 }
 
 speakBtn.addEventListener("click", async () => {
   if (!round || round.endedAt) return;
-  if (speech.listening()) {
+  if (speech.listening() || recordingOffline || recorder.listening()) {
     endTalk();
     return;
   }
-  if (!speechSupported()) {
+  if (!navigator.onLine && !recorderSupported()) {
+    consentEl.textContent = "Speaking needs Chrome. You can still type a note.";
+    return;
+  }
+  if (navigator.onLine && !speechSupported() && !recorderSupported()) {
     consentEl.textContent = "Speaking needs Chrome. You can still type a note.";
     return;
   }
@@ -665,10 +824,11 @@ speakBtn.addEventListener("click", async () => {
   const generation = talkGeneration;
   talkNoteId = null;
   talkPin = tracker.peek();
-  speech.start();
   tracker.current().then((pin) => {
     if (pin && talkGeneration === generation) talkPin = pin;
   }).catch(showFailure);
+  if (navigator.onLine && speechSupported()) speech.start();
+  else await startOfflineRecording();
 });
 
 startBtn.addEventListener("click", () => beginRound().catch(showFailure));
@@ -702,6 +862,11 @@ document.addEventListener("visibilitychange", () => {
   else screenCameBack();
 });
 window.addEventListener("pagehide", screenWentAway);
+window.addEventListener("online", () => {
+  refreshConsent();
+  transcribePending();
+});
+window.addEventListener("offline", refreshConsent);
 
 if ("serviceWorker" in navigator) {
   navigator.serviceWorker.register("./sw.js").catch(() => {

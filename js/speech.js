@@ -34,6 +34,13 @@ export function createSpeech({ onPhrase, onInterim, onState }) {
     };
 
     recognition.onerror = (event) => {
+      if (event.error === "network") {
+        userWantsMic = false;
+        interim = "";
+        onInterim("");
+        onState("network");
+        return;
+      }
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
         userWantsMic = false;
         interim = "";

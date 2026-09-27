@@ -61,6 +61,10 @@ export async function allRounds() {
   return rounds.sort((a, b) => b.startedAt - a.startedAt);
 }
 
+export async function allNotes() {
+  return (await withStore("notes", "readonly", (store) => store.getAll())) || [];
+}
+
 export async function notesForRound(roundId) {
   const notes = (await withStore("notes", "readonly", (store) => store.index("roundId").getAll(roundId))) || [];
   return notes.sort((a, b) => a.at - b.at);

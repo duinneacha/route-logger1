@@ -141,6 +141,10 @@ main {
   line-height: 1.45;
 }
 
+.note p.pending {
+  color: var(--quiet);
+}
+
 .note a.place {
   display: inline-block;
   margin-top: 0.55rem;
