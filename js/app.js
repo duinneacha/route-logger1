@@ -35,6 +35,8 @@ let talkPin = null;
 let talkGeneration = 0;
 let photoTargetId = null;
 let recordingOffline = false;
+let confirmingDeleteId = null;
+let discardTalk = false;
 let writingOut = false;
 let transcribeBusy = false;
 let micBlocked = false;
@@ -178,7 +180,7 @@ function formatPlace(lat, lng) {
 
 function queuePhrase(text) {
   const phrase = text.trim();
-  if (!phrase || !round || round.endedAt) return;
+  if (discardTalk || !phrase || !round || round.endedAt) return;
   if (!talkNoteId) {
     const note = blankNote({ text: phrase });
     talkNoteId = note.id;
@@ -263,7 +265,7 @@ async function startOfflineRecording() {
 }
 
 async function keepAudioIfNeeded(blob, noteId, pin) {
-  if (!blob || !round || round.endedAt) return;
+  if (discardTalk || !blob || !round || round.endedAt) return;
   let note = notes.find((item) => item.id === noteId);
   if (note && note.text) return;
   if (!note) {
@@ -506,29 +508,26 @@ function renderNote(note) {
     queueMicrotask(() => field.focus());
   } else {
     const body = visibleText(note);
-    if (!body) {
-      if (!note.photo) {
-        const place = renderPlace(note);
-        if (place) article.append(place);
-      }
-      return article;
-    }
-    const paragraph = document.createElement("p");
-    if (!note.text && note.pendingText) paragraph.className = "pending";
-    paragraph.textContent = body;
-    paragraph.tabIndex = 0;
-    paragraph.addEventListener("click", () => {
-      editingId = note.id;
-      renderNotes();
-    });
-    paragraph.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") {
-        event.preventDefault();
+    if (body) {
+      const paragraph = document.createElement("p");
+      if (!note.text && note.pendingText) paragraph.className = "pending";
+      paragraph.textContent = body;
+      paragraph.tabIndex = 0;
+      paragraph.addEventListener("click", () => {
+        confirmingDeleteId = null;
         editingId = note.id;
         renderNotes();
-      }
-    });
-    article.append(paragraph);
+      });
+      paragraph.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          confirmingDeleteId = null;
+          editingId = note.id;
+          renderNotes();
+        }
+      });
+      article.append(paragraph);
+    }
   }
 
   if (!note.photo) {
@@ -536,7 +535,49 @@ function renderNote(note) {
     if (place) article.append(place);
   }
 
+  article.append(renderDelete(note));
   return article;
+}
+
+function renderDelete(note) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = confirmingDeleteId === note.id ? "delete confirm" : "delete";
+  button.textContent = confirmingDeleteId === note.id ? "Delete this note" : "Delete";
+  button.addEventListener("click", () => {
+    removeNote(note.id).catch(showFailure);
+  });
+  return button;
+}
+
+function revokePhoto(id) {
+  photoUrls.forEach((url, key) => {
+    if (key.startsWith(`${id}:`)) {
+      URL.revokeObjectURL(url);
+      photoUrls.delete(key);
+    }
+  });
+}
+
+async function removeNote(id) {
+  if (confirmingDeleteId !== id) {
+    confirmingDeleteId = id;
+    renderNotes();
+    return;
+  }
+  confirmingDeleteId = null;
+  if (talkNoteId === id) {
+    discardTalk = true;
+    endTalk();
+  }
+  phraseChain = phraseChain.then(async () => {
+    if (editingId === id) editingId = null;
+    notes = notes.filter((item) => item.id !== id);
+    revokePhoto(id);
+    await deleteNote(id);
+    discardTalk = false;
+    renderNotes();
+  }).catch(showFailure);
 }
 
 function photoUrl(note) {

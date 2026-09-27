@@ -171,6 +171,22 @@ main {
   margin-top: 0.2rem;
 }
 
+.note .delete {
+  display: block;
+  margin-top: 0.55rem;
+  padding: 0.2rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--quiet);
+  font-weight: 700;
+  min-height: 2.75rem;
+  text-align: left;
+}
+
+.note .delete.confirm {
+  color: var(--ink);
+}
+
 .thumb {
   width: 3.25rem;
   height: 3.25rem;

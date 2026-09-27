@@ -1,4 +1,4 @@
-const CACHE = "route-notes-v5";
+const CACHE = "route-notes-v6";
 const ASSETS = [
   "./",
   "./index.html",
@@ -35,6 +35,7 @@ self.addEventListener("fetch", (event) => {
   if (event.request.method !== "GET") return;
   const url = new URL(event.request.url);
   if (url.origin !== self.location.origin) return;
+  if (url.pathname.endsWith("/sw.js")) return;
 
   event.respondWith(
     (async () => {
