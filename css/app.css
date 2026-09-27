@@ -116,6 +116,88 @@ main {
   max-width: 22rem;
 }
 
+.route-start {
+  margin: 0 0 1.25rem;
+}
+
+.route-start label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 700;
+}
+
+.route-start input {
+  width: 100%;
+  min-height: 3.25rem;
+  padding: 0.7rem;
+  border: 2px solid var(--ink);
+  background: white;
+  font: inherit;
+}
+
+.route-picks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.route-picks button {
+  min-height: 2.75rem;
+  padding: 0.35rem 0.8rem;
+  border: 2px solid var(--ink);
+  background: transparent;
+  font-weight: 700;
+}
+
+.earlier {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  margin: 0 -1rem 0.75rem;
+  padding: 0.7rem 1rem 0.85rem;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+}
+
+.earlier-label,
+.earlier-meta {
+  margin: 0;
+  color: var(--quiet);
+  font-size: 1rem;
+}
+
+.earlier-words {
+  margin: 0.45rem 0 0;
+}
+
+.earlier-meta {
+  margin-top: 0.15rem;
+}
+
+.earlier-controls {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.5rem;
+  margin-top: 0.7rem;
+}
+
+.earlier-controls.following {
+  grid-template-columns: 1fr 1fr;
+}
+
+.earlier-controls button {
+  min-height: 2.75rem;
+  border: 2px solid var(--ink);
+  background: transparent;
+  font-weight: 700;
+}
+
+.earlier-controls button:disabled {
+  border-color: var(--line);
+  color: var(--quiet);
+}
+
 .round-list {
   display: flex;
   flex-direction: column;
@@ -310,6 +392,11 @@ main {
 
 .speak[aria-pressed="true"] {
   background: var(--blue-pressed);
+}
+
+.speak:disabled {
+  background: var(--line);
+  color: var(--quiet);
 }
 
 .composer label {

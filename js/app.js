@@ -1,5 +1,5 @@
 import { allNotes, allRounds, deleteNote, notesForRound, putNote, putRound } from "./db.js";
-import { createTracker } from "./geo.js";
+import { clusterStops, createTracker, distanceMetres, nearestStopIndex, orderEarlierNotes } from "./geo.js";
 import { createRecorder, recorderSupported } from "./record.js";
 import { createSpeech, speechSupported } from "./speech.js";
 import { transcribeBlob } from "./transcribe.js";
@@ -48,6 +48,10 @@ let phraseChain = Promise.resolve();
 let roundWrite = Promise.resolve();
 let startingRound = false;
 let geoStatus = "waiting";
+let routeDraft = "";
+let earlierStops = [];
+let earlierIndex = 0;
+let earlierFollowing = true;
 const photoUrls = new Map();
 
 const tracker = createTracker({
@@ -60,6 +64,7 @@ const tracker = createTracker({
   onStatus: (status) => {
     geoStatus = status;
     paintStatus();
+    refreshEarlierPosition();
   },
 });
 
@@ -125,6 +130,7 @@ function saveRound() {
     id: round.id,
     startedAt: round.startedAt,
     endedAt: round.endedAt,
+    routeNumber: round.routeNumber || "",
     points: round.points.map((point) => ({ ...point })),
   };
   roundWrite = roundWrite.then(() => putRound(snapshot)).catch(showFailure);
@@ -326,6 +332,89 @@ async function loadNotes() {
   }));
 }
 
+function routeKey(value) {
+  return String(value || "").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function routeTitle(item) {
+  const number = String(item && item.routeNumber || "").replace(/\s+/g, " ").trim();
+  return number ? `Route ${number}` : "";
+}
+
+function roundListLabel(item) {
+  const name = routeTitle(item);
+  const when = formatWhen(item.startedAt);
+  if (!item.endedAt) return name ? `${name}, this round` : `This round, ${when}`;
+  return name ? `${name}, ${when}` : when;
+}
+
+function chosenRouteNumber() {
+  const field = document.querySelector("#route-number");
+  const value = field ? field.value : routeDraft;
+  return value.replace(/\s+/g, " ").trim().slice(0, 20);
+}
+
+function syncStartEnabled() {
+  startBtn.disabled = !chosenRouteNumber();
+}
+
+function recentRouteNumbers(rounds) {
+  const seen = new Set();
+  const numbers = [];
+  rounds.forEach((item) => {
+    const number = String(item.routeNumber || "").replace(/\s+/g, " ").trim();
+    const key = routeKey(number);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    numbers.push(number);
+  });
+  return numbers.slice(0, 8);
+}
+
+function appendRouteField(rounds) {
+  if (startBtn.hidden) return;
+  const wrap = document.createElement("form");
+  wrap.className = "route-start";
+  wrap.addEventListener("submit", (event) => {
+    event.preventDefault();
+    if (!chosenRouteNumber()) return;
+    beginRound().catch(showFailure);
+  });
+  const label = document.createElement("label");
+  label.htmlFor = "route-number";
+  label.textContent = "Route number";
+  const field = document.createElement("input");
+  field.id = "route-number";
+  field.maxLength = 20;
+  field.autocomplete = "off";
+  field.enterKeyHint = "go";
+  field.value = routeDraft;
+  field.addEventListener("input", () => {
+    routeDraft = field.value;
+    syncStartEnabled();
+  });
+  wrap.append(label, field);
+  const picks = recentRouteNumbers(rounds);
+  if (picks.length) {
+    const row = document.createElement("div");
+    row.className = "route-picks";
+    picks.forEach((number) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.textContent = number;
+      button.addEventListener("click", () => {
+        field.value = number;
+        routeDraft = number;
+        syncStartEnabled();
+      });
+      row.append(button);
+    });
+    wrap.append(row);
+  }
+  mainEl.append(wrap);
+  syncStartEnabled();
+}
+
 function showDock(mode) {
   composerEl.hidden = true;
   sendBtn.hidden = mode !== "export";
@@ -336,6 +425,7 @@ function showDock(mode) {
     pairEl.hidden = true;
     speakBtn.hidden = true;
     startBtn.hidden = false;
+    startBtn.disabled = true;
     endBtn.hidden = true;
     backBtn.hidden = true;
     return;
@@ -385,8 +475,9 @@ async function showHome() {
 
   const lead = document.createElement("p");
   lead.className = "lead";
-  lead.textContent = "Start a round, then speak at the door.";
+  lead.textContent = "Type the route number, then start.";
   mainEl.append(lead);
+  appendRouteField(rounds);
 
   const finished = rounds.filter((item) => item.endedAt);
   transcribePending();
@@ -398,7 +489,7 @@ async function showHome() {
     const li = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = formatWhen(item.startedAt);
+    button.textContent = roundListLabel(item);
     button.addEventListener("click", () => openExisting(item));
     li.append(button);
     list.append(li);
@@ -426,8 +517,9 @@ async function showRoundList() {
   lead.className = "lead";
   lead.textContent = startBtn.hidden
     ? "This round is still open."
-    : "Start a round, then speak at the door.";
+    : "Type the route number, then start.";
   mainEl.append(lead);
+  appendRouteField(rounds);
   if (!rounds.length) return;
 
   const list = document.createElement("ul");
@@ -436,9 +528,7 @@ async function showRoundList() {
     const li = document.createElement("li");
     const button = document.createElement("button");
     button.type = "button";
-    button.textContent = item.endedAt
-      ? formatWhen(item.startedAt)
-      : `This round, ${formatWhen(item.startedAt)}`;
+    button.textContent = roundListLabel(item);
     button.addEventListener("click", () => openExisting(item).catch(showFailure));
     li.append(button);
     list.append(li);
@@ -451,7 +541,7 @@ async function openExisting(existing) {
   viewingPast = Boolean(round.endedAt);
   viewingExport = false;
   editingId = null;
-  titleEl.textContent = viewingPast ? "Past round" : "This round";
+  titleEl.textContent = routeTitle(round) || (viewingPast ? "Past round" : "This round");
   await loadNotes();
   paintStatus();
   showDock(viewingPast ? "past" : "active");
@@ -459,6 +549,7 @@ async function openExisting(existing) {
   else tracker.stop();
   renderNotes();
   refreshConsent();
+  if (!viewingPast) await loadEarlier();
 }
 
 async function beginRound() {
@@ -471,22 +562,30 @@ async function beginRound() {
       await openExisting(existing);
       return;
     }
+    const routeNumber = chosenRouteNumber();
+    if (!routeNumber) {
+      tracker.stop();
+      return;
+    }
     round = {
       id: crypto.randomUUID(),
       startedAt: Date.now(),
       endedAt: null,
+      routeNumber,
       points: [],
     };
+    routeDraft = "";
     viewingPast = false;
     viewingExport = false;
     geoStatus = "waiting";
     await saveRound();
     notes = [];
-    titleEl.textContent = "This round";
+    titleEl.textContent = routeTitle(round);
     paintStatus();
     showDock("active");
     renderNotes();
     refreshConsent();
+    await loadEarlier();
   } finally {
     startingRound = false;
   }
@@ -501,15 +600,130 @@ async function finishRound() {
   await saveRound();
   viewingPast = true;
   viewingExport = false;
-  titleEl.textContent = "Past round";
+  titleEl.textContent = routeTitle(round) || "Past round";
+  earlierStops = [];
   paintStatus();
   showDock("past");
   renderNotes();
 }
 
+async function loadEarlier() {
+  const currentId = round && round.id;
+  const key = routeKey(round && round.routeNumber);
+  earlierStops = [];
+  earlierIndex = 0;
+  earlierFollowing = true;
+  if (!currentId || !round || round.endedAt || !key) {
+    renderEarlier();
+    return;
+  }
+  const rounds = await allRounds();
+  if (!round || round.id !== currentId) return;
+  const earlierRounds = rounds.filter((item) => (
+    item.id !== currentId && item.endedAt && routeKey(item.routeNumber) === key
+  ));
+  if (!earlierRounds.length) {
+    renderEarlier();
+    return;
+  }
+  const lists = await Promise.all(earlierRounds.map((item) => notesForRound(item.id)));
+  if (!round || round.id !== currentId) return;
+  const items = [];
+  earlierRounds.forEach((item, index) => {
+    lists[index].forEach((note) => {
+      if (note.lat == null || note.lng == null) return;
+      items.push({
+        note,
+        at: note.at,
+        day: item.startedAt,
+        lat: note.lat,
+        lng: note.lng,
+      });
+    });
+  });
+  const ordered = orderEarlierNotes(items, earlierRounds[0].points || []);
+  earlierStops = clusterStops(ordered);
+  earlierIndex = nearestStopIndex(tracker.peek(), earlierStops);
+  renderEarlier();
+}
+
+function refreshEarlierPosition() {
+  if (viewingPast || viewingExport || !round || round.endedAt || !earlierStops.length) return;
+  if (!earlierFollowing) return;
+  const next = nearestStopIndex(tracker.peek(), earlierStops);
+  if (next === earlierIndex && document.querySelector("#earlier")) return;
+  earlierIndex = next;
+  renderEarlier();
+}
+
+function stepEarlier(delta) {
+  if (!earlierStops.length) return;
+  earlierFollowing = false;
+  earlierIndex = Math.min(Math.max(earlierIndex + delta, 0), earlierStops.length - 1);
+  renderEarlier();
+}
+
+function renderEarlier() {
+  const existing = document.querySelector("#earlier");
+  const pin = tracker.peek();
+  const show = !viewingPast && !viewingExport && round && !round.endedAt && earlierStops.length && pin;
+  if (!show) {
+    if (existing) existing.remove();
+    return;
+  }
+  earlierIndex = Math.min(Math.max(earlierIndex, 0), earlierStops.length - 1);
+  const stop = earlierStops[earlierIndex];
+  const strip = existing || document.createElement("section");
+  strip.id = "earlier";
+  strip.className = "earlier";
+  strip.replaceChildren();
+  const heading = document.createElement("p");
+  heading.className = "earlier-label";
+  heading.textContent = "Earlier on this route";
+  strip.append(heading);
+  stop.forEach((item) => {
+    const words = document.createElement("p");
+    words.className = "earlier-words";
+    words.textContent = visibleText(item.note) || (item.note.photo ? "Photograph taken" : "Note");
+    const meta = document.createElement("p");
+    meta.className = "earlier-meta";
+    const distance = Math.max(0, Math.round(distanceMetres(pin, item)));
+    meta.textContent = `${dayFormat.format(item.day)} · ${distance} m`;
+    strip.append(words, meta);
+  });
+  const controls = document.createElement("div");
+  controls.className = earlierFollowing ? "earlier-controls following" : "earlier-controls";
+  const behind = document.createElement("button");
+  behind.type = "button";
+  behind.textContent = "Behind";
+  behind.disabled = earlierIndex === 0;
+  behind.addEventListener("click", () => stepEarlier(-1));
+  const ahead = document.createElement("button");
+  ahead.type = "button";
+  ahead.textContent = "Ahead";
+  ahead.disabled = earlierIndex === earlierStops.length - 1;
+  ahead.addEventListener("click", () => stepEarlier(1));
+  controls.append(behind);
+  if (!earlierFollowing) {
+    const here = document.createElement("button");
+    here.type = "button";
+    here.textContent = "Here";
+    here.addEventListener("click", () => {
+      earlierFollowing = true;
+      earlierIndex = nearestStopIndex(tracker.peek(), earlierStops);
+      renderEarlier();
+    });
+    controls.append(here);
+  }
+  controls.append(ahead);
+  strip.append(controls);
+  if (!existing) mainEl.prepend(strip);
+}
+
 function renderNotes() {
   if (viewingExport) return;
   mainEl.replaceChildren();
+  renderEarlier();
   if (!notes.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
@@ -686,7 +900,7 @@ async function showExport() {
   const sheet = document.createElement("article");
   sheet.className = "sheet";
   const heading = document.createElement("h2");
-  heading.textContent = "Route notes";
+  heading.textContent = routeTitle(round) || "Route notes";
   const when = document.createElement("p");
   when.className = "when";
   when.textContent = formatWhen(round.startedAt);
@@ -771,7 +985,7 @@ function fileStamp() {
 }
 
 function printableLines() {
-  const lines = ["Route notes", formatWhen(round.startedAt)];
+  const lines = [routeTitle(round) || "Route notes", formatWhen(round.startedAt)];
   if (round.endedAt) lines.push(`Ended ${formatWhen(round.endedAt)}`);
   lines.push("");
   if (!notes.length) {

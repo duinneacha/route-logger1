@@ -14,6 +14,57 @@ export function distanceMetres(a, b) {
   return 2 * earth * Math.asin(Math.min(1, Math.sqrt(h)));
 }
 
+export function alongTrail(pin, trail) {
+  const spine = (trail || []).filter((point) => point && point.lat != null && point.lng != null);
+  if (spine.length < 2 || !pin || pin.lat == null) return null;
+  let best = 0;
+  let bestDistance = Infinity;
+  spine.forEach((point, index) => {
+    const distance = distanceMetres(pin, point);
+    if (distance < bestDistance) {
+      bestDistance = distance;
+      best = index;
+    }
+  });
+  return best;
+}
+
+export function orderEarlierNotes(items, trail) {
+  return items
+    .map((item) => ({
+      ...item,
+      along: alongTrail(item, trail) ?? item.at,
+    }))
+    .sort((a, b) => a.along - b.along || a.at - b.at);
+}
+
+export function clusterStops(items, metres = 40) {
+  const stops = [];
+  items.forEach((item) => {
+    const current = stops[stops.length - 1];
+    const anchor = current && current[current.length - 1];
+    if (anchor && distanceMetres(anchor, item) <= metres) current.push(item);
+    else stops.push([item]);
+  });
+  return stops;
+}
+
+export function nearestStopIndex(pin, stops) {
+  if (!pin || !stops.length) return 0;
+  let best = 0;
+  let bestDistance = Infinity;
+  stops.forEach((stop, index) => {
+    stop.forEach((item) => {
+      const distance = distanceMetres(pin, item);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = index;
+      }
+    });
+  });
+  return best;
+}
+
 export function toPin(position) {
   return {
     lat: position.coords.latitude,
