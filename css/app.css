@@ -55,6 +55,10 @@ button {
   touch-action: manipulation;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 :focus-visible {
   outline: 3px solid var(--blue);
   outline-offset: 2px;
@@ -85,10 +89,16 @@ h1 {
   font-size: 1rem;
 }
 
-.quiet {
+.top-actions {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
   flex: 0 0 auto;
+}
+
+.quiet {
   margin-top: 0.15rem;
-  padding: 0.55rem 0.2rem;
+  padding: 0.45rem 0.2rem;
   border: 0;
   background: transparent;
   color: var(--ink);
@@ -204,11 +214,42 @@ main {
   resize: vertical;
 }
 
-.exports {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0.6rem;
-  padding: 1rem 0 0.4rem;
+.export {
+  width: 100%;
+  min-height: 3.25rem;
+  margin-top: 1rem;
+  border: 2px solid var(--ink);
+  background: transparent;
+  font-weight: 700;
+}
+
+.sheet {
+  background: white;
+  padding: 1.25rem 1rem 1.5rem;
+  border: 1px solid var(--line);
+}
+
+.sheet h2 {
+  margin: 0;
+  font-size: 1.45rem;
+  line-height: 1.2;
+}
+
+.sheet .when {
+  margin: 0.35rem 0 0;
+}
+
+.sheet-note {
+  margin-top: 1.15rem;
+}
+
+.sheet-note p {
+  margin: 0.15rem 0 0;
+  white-space: pre-wrap;
+}
+
+.sheet-note p:first-child {
+  font-weight: 700;
 }
 
 .dock,
@@ -237,13 +278,13 @@ main {
 }
 
 .pair button,
-.exports button,
+.export,
 .note textarea {
   min-height: 3.25rem;
 }
 
 .pair button,
-.exports button {
+.export {
   border: 2px solid var(--ink);
   background: transparent;
   font-weight: 700;
@@ -261,7 +302,7 @@ main {
 
 .speak:active,
 .pair button:active,
-.exports button:active {
+.export:active {
   background: var(--blue-pressed);
   color: white;
   border-color: var(--blue-pressed);

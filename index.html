@@ -16,8 +16,11 @@
         <h1 id="title">Route notes</h1>
         <p id="status" aria-live="polite">No round yet</p>
       </div>
-      <button type="button" class="quiet" id="end-round" hidden>End round</button>
-      <button type="button" class="quiet" id="back" hidden>Rounds</button>
+      <div class="top-actions">
+        <button type="button" class="quiet" id="home" hidden>Home</button>
+        <button type="button" class="quiet" id="back" hidden>Back</button>
+        <button type="button" class="quiet" id="end-round" hidden>End round</button>
+      </div>
     </header>
 
     <main id="main"></main>
@@ -31,6 +34,7 @@
       </div>
       <button type="button" class="speak" id="speak-btn" aria-pressed="false">Speak</button>
       <button type="button" class="speak" id="start-btn" hidden>Start round</button>
+      <button type="button" class="speak" id="send-btn" hidden>Send</button>
     </div>
 
     <form class="composer" id="composer" hidden>

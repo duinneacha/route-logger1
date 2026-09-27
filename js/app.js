@@ -15,6 +15,8 @@ const speakBtn = document.querySelector("#speak-btn");
 const startBtn = document.querySelector("#start-btn");
 const endBtn = document.querySelector("#end-round");
 const backBtn = document.querySelector("#back");
+const homeBtn = document.querySelector("#home");
+const sendBtn = document.querySelector("#send-btn");
 const composerEl = document.querySelector("#composer");
 const draftEl = document.querySelector("#draft");
 const cameraInput = document.querySelector("#camera");
@@ -29,6 +31,7 @@ const dayFormat = new Intl.DateTimeFormat("en-IE", {
 let round = null;
 let notes = [];
 let viewingPast = false;
+let viewingExport = false;
 let editingId = null;
 let talkNoteId = null;
 let talkPin = null;
@@ -104,6 +107,7 @@ function positionSentence() {
 }
 
 function paintStatus() {
+  if (viewingExport) return;
   if (!round) {
     statusEl.textContent = "No round yet";
     return;
@@ -324,6 +328,8 @@ async function loadNotes() {
 
 function showDock(mode) {
   composerEl.hidden = true;
+  sendBtn.hidden = mode !== "export";
+  homeBtn.hidden = mode === "home";
   if (mode === "home") {
     dockEl.hidden = false;
     consentEl.hidden = true;
@@ -344,17 +350,28 @@ function showDock(mode) {
     backBtn.hidden = true;
     return;
   }
+  if (mode === "export") {
+    dockEl.hidden = false;
+    consentEl.hidden = true;
+    pairEl.hidden = true;
+    speakBtn.hidden = true;
+    startBtn.hidden = true;
+    endBtn.hidden = true;
+    backBtn.hidden = false;
+    return;
+  }
   dockEl.hidden = true;
   endBtn.hidden = true;
-  backBtn.hidden = false;
+  backBtn.hidden = true;
 }
 
 async function showHome() {
   viewingPast = false;
+  viewingExport = false;
   editingId = null;
   const rounds = await allRounds();
   const unfinished = rounds.find((item) => !item.endedAt);
-    if (unfinished) {
+  if (unfinished) {
     await openExisting(unfinished);
     transcribePending();
     return;
@@ -389,9 +406,50 @@ async function showHome() {
   mainEl.append(list);
 }
 
+async function showRoundList() {
+  viewingExport = false;
+  viewingPast = false;
+  editingId = null;
+  confirmingDeleteId = null;
+  endTalk();
+  tracker.stop();
+  const rounds = await allRounds();
+  round = null;
+  notes = [];
+  titleEl.textContent = "Route notes";
+  statusEl.textContent = rounds.length ? "Choose a round" : "No round yet";
+  showDock("home");
+  startBtn.hidden = rounds.some((item) => !item.endedAt);
+  mainEl.replaceChildren();
+
+  const lead = document.createElement("p");
+  lead.className = "lead";
+  lead.textContent = startBtn.hidden
+    ? "This round is still open."
+    : "Start a round, then speak at the door.";
+  mainEl.append(lead);
+  if (!rounds.length) return;
+
+  const list = document.createElement("ul");
+  list.className = "round-list";
+  rounds.forEach((item) => {
+    const li = document.createElement("li");
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = item.endedAt
+      ? formatWhen(item.startedAt)
+      : `This round, ${formatWhen(item.startedAt)}`;
+    button.addEventListener("click", () => openExisting(item).catch(showFailure));
+    li.append(button);
+    list.append(li);
+  });
+  mainEl.append(list);
+}
+
 async function openExisting(existing) {
   round = existing;
   viewingPast = Boolean(round.endedAt);
+  viewingExport = false;
   editingId = null;
   titleEl.textContent = viewingPast ? "Past round" : "This round";
   await loadNotes();
@@ -406,26 +464,32 @@ async function openExisting(existing) {
 async function beginRound() {
   if (startingRound || (round && !round.endedAt)) return;
   startingRound = true;
-  round = {
-    id: crypto.randomUUID(),
-    startedAt: Date.now(),
-    endedAt: null,
-    points: [],
-  };
-  viewingPast = false;
-  geoStatus = "waiting";
   tracker.start();
   try {
+    const existing = (await allRounds()).find((item) => !item.endedAt);
+    if (existing) {
+      await openExisting(existing);
+      return;
+    }
+    round = {
+      id: crypto.randomUUID(),
+      startedAt: Date.now(),
+      endedAt: null,
+      points: [],
+    };
+    viewingPast = false;
+    viewingExport = false;
+    geoStatus = "waiting";
     await saveRound();
+    notes = [];
+    titleEl.textContent = "This round";
+    paintStatus();
+    showDock("active");
+    renderNotes();
+    refreshConsent();
   } finally {
     startingRound = false;
   }
-  notes = [];
-  titleEl.textContent = "This round";
-  paintStatus();
-  showDock("active");
-  renderNotes();
-  refreshConsent();
 }
 
 async function finishRound() {
@@ -436,6 +500,7 @@ async function finishRound() {
   round.endedAt = Date.now();
   await saveRound();
   viewingPast = true;
+  viewingExport = false;
   titleEl.textContent = "Past round";
   paintStatus();
   showDock("past");
@@ -443,6 +508,7 @@ async function finishRound() {
 }
 
 function renderNotes() {
+  if (viewingExport) return;
   mainEl.replaceChildren();
   if (!notes.length) {
     const empty = document.createElement("p");
@@ -452,7 +518,7 @@ function renderNotes() {
   } else {
     notes.forEach((note) => mainEl.append(renderNote(note)));
   }
-  mainEl.append(renderExports());
+  mainEl.append(renderExportButton());
 }
 
 function renderTime(note) {
@@ -595,19 +661,73 @@ function photoUrl(note) {
   return photoUrls.get(key);
 }
 
-function renderExports() {
-  const row = document.createElement("div");
-  row.className = "exports";
-  const textBtn = document.createElement("button");
-  textBtn.type = "button";
-  textBtn.textContent = "Export text";
-  textBtn.addEventListener("click", exportText);
-  const backupBtn = document.createElement("button");
-  backupBtn.type = "button";
-  backupBtn.textContent = "Export backup";
-  backupBtn.addEventListener("click", exportBackup);
-  row.append(textBtn, backupBtn);
-  return row;
+function renderExportButton() {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = "export";
+  button.textContent = "Export";
+  button.addEventListener("click", () => showExport().catch(showFailure));
+  return button;
+}
+
+async function showExport() {
+  if (!round) return;
+  viewingExport = true;
+  editingId = null;
+  confirmingDeleteId = null;
+  endTalk();
+  await phraseChain;
+  if (!viewingExport || !round) return;
+  titleEl.textContent = "Print";
+  statusEl.textContent = "Send this in WhatsApp so it can be printed.";
+  showDock("export");
+  mainEl.replaceChildren();
+
+  const sheet = document.createElement("article");
+  sheet.className = "sheet";
+  const heading = document.createElement("h2");
+  heading.textContent = "Route notes";
+  const when = document.createElement("p");
+  when.className = "when";
+  when.textContent = formatWhen(round.startedAt);
+  sheet.append(heading, when);
+  if (round.endedAt) {
+    const ended = document.createElement("p");
+    ended.className = "when";
+    ended.textContent = `Ended ${formatWhen(round.endedAt)}`;
+    sheet.append(ended);
+  }
+  if (!notes.length) {
+    const empty = document.createElement("p");
+    empty.className = "sheet-note";
+    empty.textContent = "No notes on this round.";
+    sheet.append(empty);
+  } else {
+    notes.forEach((note) => sheet.append(renderSheetNote(note)));
+  }
+  mainEl.append(sheet);
+}
+
+function renderSheetNote(note) {
+  const block = document.createElement("div");
+  block.className = "sheet-note";
+  const time = document.createElement("p");
+  time.textContent = timeFormat.format(note.at);
+  const body = document.createElement("p");
+  const written = visibleText(note);
+  body.textContent = written || (note.photo ? "Photograph taken" : "");
+  block.append(time, body);
+  if (note.lat != null && note.lng != null) {
+    const place = document.createElement("p");
+    place.textContent = formatPlace(note.lat, note.lng);
+    block.append(place);
+  }
+  if (note.photo && written) {
+    const photo = document.createElement("p");
+    photo.textContent = "Photograph taken";
+    block.append(photo);
+  }
+  return block;
 }
 
 async function saveEdit(id, value) {
@@ -650,47 +770,137 @@ function fileStamp() {
   return `${when.getFullYear()}-${month}-${day}`;
 }
 
-function exportText() {
-  if (!round) return;
-  const lines = [`Round ${formatWhen(round.startedAt)}`];
+function printableLines() {
+  const lines = ["Route notes", formatWhen(round.startedAt)];
   if (round.endedAt) lines.push(`Ended ${formatWhen(round.endedAt)}`);
   lines.push("");
+  if (!notes.length) {
+    lines.push("No notes on this round.");
+    return lines;
+  }
   notes.forEach((note) => {
     lines.push(timeFormat.format(note.at));
-    lines.push(visibleText(note) || "Photo");
-    if (note.lat != null && note.lng != null) {
-      lines.push(formatPlace(note.lat, note.lng));
-      lines.push(`https://www.google.com/maps?q=${note.lat},${note.lng}`);
-    }
-    if (note.photo) lines.push("Photo attached");
+    const written = visibleText(note);
+    wrapLine(written || (note.photo ? "Photograph taken" : ""), 78).forEach((line) => {
+      lines.push(line);
+    });
+    if (note.lat != null && note.lng != null) lines.push(formatPlace(note.lat, note.lng));
+    if (note.photo && written) lines.push("Photograph taken");
     lines.push("");
   });
-  lines.push(`Trail points: ${round.points.length}`);
-  download(`route-${fileStamp()}.txt`, new Blob([lines.join("\n")], { type: "text/plain" }));
+  return lines;
 }
 
-async function exportBackup() {
-  if (!round) return;
-  const payload = {
-    round,
-    notes: await Promise.all(notes.map(async (note) => ({
-      ...note,
-      photo: note.photo ? await blobToDataUrl(note.photo) : null,
-    }))),
-  };
-  download(
-    `route-${fileStamp()}.json`,
-    new Blob([JSON.stringify(payload)], { type: "application/json" })
-  );
-}
-
-function blobToDataUrl(blob) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(blob);
+function wrapLine(text, width) {
+  const words = String(text).split(/\s+/).filter(Boolean);
+  if (!words.length) return [""];
+  const lines = [];
+  let current = "";
+  words.forEach((word) => {
+    const next = current ? `${current} ${word}` : word;
+    if (next.length > width && current) {
+      lines.push(current);
+      current = word;
+    } else current = next;
   });
+  if (current) lines.push(current);
+  return lines;
+}
+
+const PDF_CHARS = {
+  "°": "\\260",
+  "á": "\\341",
+  "é": "\\351",
+  "í": "\\355",
+  "ó": "\\363",
+  "ú": "\\372",
+  "Á": "\\301",
+  "É": "\\311",
+  "Í": "\\315",
+  "Ó": "\\323",
+  "Ú": "\\332",
+  "’": "'",
+  "‘": "'",
+  "“": "\"",
+  "”": "\"",
+  "–": "-",
+  "—": "-",
+  "…": "...",
+};
+
+function pdfEscape(text) {
+  let out = "";
+  for (const char of String(text)) {
+    if (char === "\\") out += "\\\\";
+    else if (char === "(") out += "\\(";
+    else if (char === ")") out += "\\)";
+    else if (PDF_CHARS[char]) out += PDF_CHARS[char];
+    else if (char >= " " && char <= "~") out += char;
+  }
+  return out;
+}
+
+function buildPdf(lines) {
+  const perPage = 44;
+  const chunks = [];
+  for (let i = 0; i < lines.length; i += perPage) chunks.push(lines.slice(i, i + perPage));
+  if (!chunks.length) chunks.push([""]);
+
+  const objects = [];
+  objects[1] = "<< /Type /Catalog /Pages 2 0 R >>";
+  objects[2] = `<< /Type /Pages /Count ${chunks.length} /Kids [${chunks.map((_, index) => `${4 + index * 2} 0 R`).join(" ")}] >>`;
+  objects[3] = "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>";
+  chunks.forEach((pageLines, index) => {
+    const pageId = 4 + index * 2;
+    const contentId = pageId + 1;
+    const commands = ["BT", "/F1 12 Tf", "50 790 Td", "16 TL"];
+    pageLines.forEach((line, lineIndex) => {
+      const text = `(${pdfEscape(line)}) Tj`;
+      commands.push(lineIndex === 0 ? text : `T* ${text}`);
+    });
+    commands.push("ET");
+    const stream = commands.join("\n");
+    objects[pageId] = `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 595 842] /Resources << /Font << /F1 3 0 R >> >> /Contents ${contentId} 0 R >>`;
+    objects[contentId] = `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`;
+  });
+
+  let pdf = "%PDF-1.4\n";
+  const offsets = [0];
+  for (let id = 1; id < objects.length; id += 1) {
+    offsets[id] = pdf.length;
+    pdf += `${id} 0 obj\n${objects[id]}\nendobj\n`;
+  }
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length}\n`;
+  pdf += "0000000000 65535 f \n";
+  for (let id = 1; id < objects.length; id += 1) {
+    pdf += `${String(offsets[id]).padStart(10, "0")} 00000 n \n`;
+  }
+  pdf += `trailer\n<< /Size ${objects.length} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF`;
+  return new Blob([pdf], { type: "application/pdf" });
+}
+
+async function sendPrintable() {
+  if (!round || sendBtn.disabled) return;
+  sendBtn.disabled = true;
+  try {
+    const blob = buildPdf(printableLines());
+    const name = `route-${fileStamp()}.pdf`;
+    const file = new File([blob], name, { type: "application/pdf" });
+    let shared = false;
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      try {
+        await navigator.share({ files: [file], title: "Route notes" });
+        shared = true;
+      } catch (error) {
+        if (error && error.name === "AbortError") return;
+      }
+    }
+    if (!shared) download(name, blob);
+    if (round) await openExisting(round);
+  } finally {
+    sendBtn.disabled = false;
+  }
 }
 
 function compressImage(file) {
@@ -875,9 +1085,14 @@ speakBtn.addEventListener("click", async () => {
 startBtn.addEventListener("click", () => beginRound().catch(showFailure));
 endBtn.addEventListener("click", () => finishRound().catch(showFailure));
 backBtn.addEventListener("click", () => {
-  round = null;
-  tracker.stop();
-  showHome().catch(showFailure);
+  if (!viewingExport || !round) return;
+  openExisting(round).catch(showFailure);
+});
+homeBtn.addEventListener("click", () => {
+  showRoundList().catch(showFailure);
+});
+sendBtn.addEventListener("click", () => {
+  sendPrintable().catch(showFailure);
 });
 document.querySelector("#type-btn").addEventListener("click", openComposer);
 document.querySelector("#draft-cancel").addEventListener("click", closeComposer);
