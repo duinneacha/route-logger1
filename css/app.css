@@ -1,0 +1,268 @@
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("../fonts/AtkinsonHyperlegible-Regular.ttf") format("truetype");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: "Atkinson Hyperlegible";
+  src: url("../fonts/AtkinsonHyperlegible-Bold.ttf") format("truetype");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  --paper: #f4f7f5;
+  --ink: #1c2430;
+  --blue: #0c4fd4;
+  --blue-pressed: #093a9c;
+  --line: #d5dde3;
+  --quiet: #3e4c59;
+  --font: "Atkinson Hyperlegible", "Segoe UI", sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  min-height: 100dvh;
+  display: flex;
+  flex-direction: column;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 1.125rem;
+  line-height: 1.45;
+}
+
+button,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  touch-action: manipulation;
+}
+
+:focus-visible {
+  outline: 3px solid var(--blue);
+  outline-offset: 2px;
+}
+
+.top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: calc(0.85rem + env(safe-area-inset-top)) 1rem 0.75rem;
+}
+
+.heading {
+  min-width: 0;
+}
+
+h1 {
+  margin: 0;
+  font-size: 1.7rem;
+  line-height: 1.15;
+  font-weight: 700;
+}
+
+#status {
+  margin: 0.35rem 0 0;
+  color: var(--quiet);
+  font-size: 1rem;
+}
+
+.quiet {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+  padding: 0.55rem 0.2rem;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-weight: 700;
+}
+
+main {
+  flex: 1;
+  overflow: auto;
+  padding: 0.25rem 1rem 1rem;
+}
+
+.lead {
+  margin: 0.5rem 0 1.25rem;
+  max-width: 22rem;
+}
+
+.round-list {
+  display: flex;
+  flex-direction: column;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.round-list button {
+  width: 100%;
+  min-height: 3.5rem;
+  padding: 0.8rem 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  background: transparent;
+  text-align: left;
+}
+
+.note {
+  padding: 0.95rem 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.note time {
+  display: block;
+  color: var(--quiet);
+  font-size: 1rem;
+}
+
+.note p {
+  margin: 0.2rem 0 0;
+  white-space: pre-wrap;
+}
+
+.note a {
+  display: inline-block;
+  margin-top: 0.45rem;
+  color: var(--blue);
+  font-weight: 700;
+}
+
+.note img {
+  display: block;
+  width: 100%;
+  max-height: 16rem;
+  object-fit: cover;
+  margin-top: 0.7rem;
+}
+
+.note textarea {
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.7rem;
+  border: 2px solid var(--ink);
+  background: white;
+  resize: vertical;
+}
+
+.exports {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  padding: 1rem 0 0.4rem;
+}
+
+.dock,
+.composer {
+  padding: 0.75rem 1rem calc(0.8rem + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--line);
+  background: var(--paper);
+}
+
+.consent,
+.live {
+  margin: 0 0 0.7rem;
+  font-size: 1rem;
+}
+
+.live {
+  min-height: 1.45rem;
+  font-weight: 700;
+}
+
+.pair {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
+.pair button,
+.exports button,
+.note textarea {
+  min-height: 3.25rem;
+}
+
+.pair button,
+.exports button {
+  border: 2px solid var(--ink);
+  background: transparent;
+  font-weight: 700;
+}
+
+.speak {
+  width: 100%;
+  min-height: 4.6rem;
+  border: 0;
+  background: var(--blue);
+  color: white;
+  font-size: 1.4rem;
+  font-weight: 700;
+}
+
+.speak:active,
+.pair button:active,
+.exports button:active {
+  background: var(--blue-pressed);
+  color: white;
+  border-color: var(--blue-pressed);
+}
+
+.speak[aria-pressed="true"] {
+  background: var(--blue-pressed);
+}
+
+.composer label {
+  display: block;
+  margin-bottom: 0.4rem;
+  font-weight: 700;
+}
+
+.composer textarea {
+  width: 100%;
+  margin-bottom: 0.7rem;
+  padding: 0.75rem;
+  border: 2px solid var(--ink);
+  background: white;
+  resize: vertical;
+}
+
+.composer .pair {
+  margin-bottom: 0;
+}
+
+#draft-save {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: white;
+}
+
+.empty {
+  margin: 0.4rem 0 0;
+  color: var(--quiet);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto;
+  }
+}
