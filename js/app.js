@@ -355,14 +355,48 @@ function renderNotes() {
   mainEl.append(renderExports());
 }
 
-function renderNote(note) {
-  const article = document.createElement("article");
-  article.className = "note";
-
+function renderTime(note) {
   const time = document.createElement("time");
   time.dateTime = new Date(note.at).toISOString();
   time.textContent = timeFormat.format(note.at);
-  article.append(time);
+  return time;
+}
+
+function renderPlace(note) {
+  if (note.lat == null || note.lng == null) return null;
+  const place = formatPlace(note.lat, note.lng);
+  const link = document.createElement("a");
+  link.className = "place";
+  link.href = `https://www.google.com/maps?q=${note.lat},${note.lng}`;
+  link.target = "_blank";
+  link.rel = "noopener noreferrer";
+  link.textContent = place;
+  link.setAttribute("aria-label", `${place}. Open in Google Maps`);
+  return link;
+}
+
+function renderNote(note) {
+  const article = document.createElement("article");
+  article.className = "note";
+  article.dataset.noteId = note.id;
+
+  if (note.photo) {
+    const head = document.createElement("div");
+    head.className = "note-head";
+    const image = document.createElement("img");
+    image.className = "thumb";
+    image.alt = "Photo taken with this note";
+    image.src = photoUrl(note);
+    const meta = document.createElement("div");
+    meta.className = "note-meta";
+    meta.append(renderTime(note));
+    const place = renderPlace(note);
+    if (place) meta.append(place);
+    head.append(image, meta);
+    article.append(head);
+  } else {
+    article.append(renderTime(note));
+  }
 
   if (editingId === note.id) {
     const field = document.createElement("textarea");
@@ -373,8 +407,9 @@ function renderNote(note) {
     article.append(field);
     queueMicrotask(() => field.focus());
   } else {
+    if (!note.text) return article;
     const paragraph = document.createElement("p");
-    paragraph.textContent = note.text || "Photo";
+    paragraph.textContent = note.text;
     paragraph.tabIndex = 0;
     paragraph.addEventListener("click", () => {
       editingId = note.id;
@@ -390,23 +425,9 @@ function renderNote(note) {
     article.append(paragraph);
   }
 
-  if (note.lat != null && note.lng != null) {
-    const place = formatPlace(note.lat, note.lng);
-    const link = document.createElement("a");
-    link.className = "place";
-    link.href = `https://www.google.com/maps?q=${note.lat},${note.lng}`;
-    link.target = "_blank";
-    link.rel = "noopener noreferrer";
-    link.textContent = place;
-    link.setAttribute("aria-label", `${place}. Open in Google Maps`);
-    article.append(link);
-  }
-
-  if (note.photo) {
-    const image = document.createElement("img");
-    image.alt = "Photo from this note";
-    image.src = photoUrl(note);
-    article.append(image);
+  if (!note.photo) {
+    const place = renderPlace(note);
+    if (place) article.append(place);
   }
 
   return article;
@@ -518,25 +539,35 @@ function blobToDataUrl(blob) {
 }
 
 function compressImage(file) {
+  const draw = (source, width, height) => {
+    const maxEdge = 1280;
+    const scale = Math.min(1, maxEdge / Math.max(width, height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(width * scale));
+    canvas.height = Math.max(1, Math.round(height * scale));
+    canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+    return new Promise((resolve, reject) => {
+      canvas.toBlob(
+        (blob) => (blob ? resolve(blob) : reject(new Error("Could not save that photo."))),
+        "image/jpeg",
+        0.72
+      );
+    });
+  };
+
+  if (typeof createImageBitmap === "function") {
+    return createImageBitmap(file, { imageOrientation: "from-image" }).then((bitmap) => {
+      const blob = draw(bitmap, bitmap.width, bitmap.height);
+      bitmap.close();
+      return blob;
+    });
+  }
+
   return new Promise((resolve, reject) => {
     const url = URL.createObjectURL(file);
     const image = new Image();
     image.onload = () => {
-      const maxEdge = 1280;
-      const scale = Math.min(1, maxEdge / Math.max(image.width, image.height));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(image.width * scale));
-      canvas.height = Math.max(1, Math.round(image.height * scale));
-      canvas.getContext("2d").drawImage(image, 0, 0, canvas.width, canvas.height);
-      canvas.toBlob(
-        (blob) => {
-          URL.revokeObjectURL(url);
-          if (blob) resolve(blob);
-          else reject(new Error("Could not save that photo."));
-        },
-        "image/jpeg",
-        0.72
-      );
+      draw(image, image.width, image.height).then(resolve, reject).finally(() => URL.revokeObjectURL(url));
     };
     image.onerror = () => {
       URL.revokeObjectURL(url);
@@ -578,7 +609,12 @@ async function saveTypedNote(text) {
 
 async function savePhoto(file) {
   if (!round || round.endedAt) return;
-  const blob = await compressImage(file);
+  let blob = file;
+  try {
+    blob = await compressImage(file);
+  } catch {
+    blob = file;
+  }
   const pin = talkPin || tracker.peek();
   const targetId = photoTargetId || talkNoteId;
   photoTargetId = null;
@@ -596,6 +632,8 @@ async function savePhoto(file) {
   }
   await putNote(note);
   renderNotes();
+  const saved = document.querySelector(`[data-note-id="${note.id}"]`);
+  if (saved) saved.scrollIntoView({ block: "nearest" });
   rememberPin(note);
 }
 
