@@ -1125,7 +1125,15 @@ window.addEventListener("online", () => {
 window.addEventListener("offline", refreshConsent);
 
 if ("serviceWorker" in navigator) {
-  navigator.serviceWorker.register("./sw.js").catch(() => {
+  let refreshing = false;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (refreshing) return;
+    refreshing = true;
+    window.location.reload();
+  });
+  navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" }).then((registration) => {
+    registration.update();
+  }).catch(() => {
     // The page still works for this visit if the worker cannot install.
   });
 }

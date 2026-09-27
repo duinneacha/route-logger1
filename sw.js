@@ -1,4 +1,4 @@
-const CACHE = "route-notes-v8";
+const CACHE = "route-notes-v9";
 const ASSETS = [
   "./",
   "./index.html",
@@ -24,10 +24,15 @@ self.addEventListener("install", (event) => {
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches
-      .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
-      .then(() => self.clients.claim())
+    (async () => {
+      const keys = await caches.keys();
+      await Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key)));
+      await self.clients.claim();
+      const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
+      await Promise.all(windows.map((client) => (
+        client.navigate ? client.navigate(client.url).catch(() => null) : null
+      )));
+    })()
   );
 });
 
@@ -40,20 +45,24 @@ self.addEventListener("fetch", (event) => {
   event.respondWith(
     (async () => {
       const cache = await caches.open(CACHE);
-      const cached = await cache.match(event.request);
-      const refresh = fetch(event.request)
+      const saved = cache.match(event.request).then((hit) => (
+        hit || (event.request.mode === "navigate" ? cache.match("./index.html") : null)
+      ));
+      const fresh = fetch(event.request)
         .then((response) => {
           if (response.ok) cache.put(event.request, response.clone());
-          return response;
+          return response.ok ? response : null;
         })
         .catch(() => null);
+      const quick = await Promise.race([
+        fresh,
+        saved.then(() => new Promise((resolve) => setTimeout(() => resolve("slow"), 3000))),
+      ]);
+      if (quick && quick !== "slow") return quick;
+      const cached = await saved;
       if (cached) return cached;
-      const response = await refresh;
+      const response = await fresh;
       if (response) return response;
-      if (event.request.mode === "navigate") {
-        const shell = await cache.match("./index.html");
-        if (shell) return shell;
-      }
       return new Response("Offline", { status: 503, statusText: "Offline" });
     })()
   );
