@@ -359,16 +359,40 @@ main {
   margin-bottom: 0.6rem;
 }
 
+.tools {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 0.6rem;
+  margin-bottom: 0.6rem;
+}
+
 .pair button,
+.tools button,
 .export,
 .note textarea {
   min-height: 3.25rem;
 }
 
 .pair button,
+.tools button,
 .export {
   border: 2px solid var(--ink);
   background: transparent;
+  font-weight: 700;
+}
+
+.tools button[aria-pressed="true"] {
+  background: var(--blue);
+  border-color: var(--blue);
+  color: white;
+}
+
+.add-words {
+  margin-top: 0.35rem;
+  padding: 0.2rem 0;
+  border: 0;
+  background: transparent;
+  color: var(--quiet);
   font-weight: 700;
 }
 
@@ -384,6 +408,7 @@ main {
 
 .speak:active,
 .pair button:active,
+.tools button:active,
 .export:active {
   background: var(--blue-pressed);
   color: white;

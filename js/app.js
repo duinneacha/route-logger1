@@ -12,6 +12,7 @@ const consentEl = document.querySelector("#consent");
 const liveEl = document.querySelector("#live");
 const pairEl = document.querySelector("#pair");
 const speakBtn = document.querySelector("#speak-btn");
+const stopBtn = document.querySelector("#stop-btn");
 const startBtn = document.querySelector("#start-btn");
 const endBtn = document.querySelector("#end-round");
 const backBtn = document.querySelector("#back");
@@ -80,6 +81,7 @@ const speech = createSpeech({
     if (state === "listening") {
       speakBtn.textContent = "Stop";
       speakBtn.setAttribute("aria-pressed", "true");
+      consentEl.hidden = false;
       consentEl.textContent = "Listening. Press the side button to end this talk.";
       return;
     }
@@ -221,10 +223,11 @@ function visibleText(note) {
 }
 
 function refreshConsent() {
-  if (consentEl.hidden || speech.listening()) return;
+  if (speech.listening()) return;
   if (recordingOffline) {
     speakBtn.textContent = "Stop";
     speakBtn.setAttribute("aria-pressed", "true");
+    consentEl.hidden = false;
     consentEl.textContent = "No signal. Press the side button to end this talk.";
     return;
   }
@@ -233,13 +236,16 @@ function refreshConsent() {
   liveEl.hidden = true;
   liveEl.textContent = "";
   if (writingOut) {
+    consentEl.hidden = false;
     consentEl.textContent = "Writing out saved talks.";
     return;
   }
   if (micBlocked) {
+    consentEl.hidden = false;
     consentEl.textContent = "Microphone is blocked. Allow it in the browser settings.";
     return;
   }
+  consentEl.hidden = true;
   if (!navigator.onLine) {
     consentEl.textContent = "No signal. Speaking will be written out when you are back in range. You can type a note now.";
     return;
@@ -418,6 +424,7 @@ function appendRouteField(rounds) {
 function showDock(mode) {
   composerEl.hidden = true;
   sendBtn.hidden = mode !== "export";
+  stopBtn.hidden = mode !== "active";
   homeBtn.hidden = mode === "home";
   if (mode === "home") {
     dockEl.hidden = false;
@@ -432,7 +439,7 @@ function showDock(mode) {
   }
   if (mode === "active") {
     dockEl.hidden = false;
-    consentEl.hidden = false;
+    consentEl.hidden = true;
     pairEl.hidden = false;
     speakBtn.hidden = false;
     startBtn.hidden = true;
@@ -793,20 +800,20 @@ function renderNote(note) {
       if (!note.text && note.pendingText) paragraph.className = "pending";
       paragraph.textContent = body;
       paragraph.tabIndex = 0;
-      paragraph.addEventListener("click", () => {
-        confirmingDeleteId = null;
-        editingId = note.id;
-        renderNotes();
-      });
+      paragraph.addEventListener("click", () => openNoteEditor(note.id));
       paragraph.addEventListener("keydown", (event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          confirmingDeleteId = null;
-          editingId = note.id;
-          renderNotes();
-        }
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        openNoteEditor(note.id);
       });
       article.append(paragraph);
+    } else if (note.stop) {
+      const add = document.createElement("button");
+      add.type = "button";
+      add.className = "add-words";
+      add.textContent = "Add words";
+      add.addEventListener("click", () => openNoteEditor(note.id));
+      article.append(add);
     }
   }
 
@@ -929,7 +936,7 @@ function renderSheetNote(note) {
   time.textContent = timeFormat.format(note.at);
   const body = document.createElement("p");
   const written = visibleText(note);
-  body.textContent = written || (note.photo ? "Photograph taken" : "");
+  body.textContent = written || (note.photo ? "Photograph taken" : note.stop ? "Stop" : "");
   block.append(time, body);
   if (note.lat != null && note.lng != null) {
     const place = document.createElement("p");
@@ -954,7 +961,7 @@ async function saveEdit(id, value) {
     renderNotes();
     return;
   }
-  if (!text && !note.photo && !note.audio) {
+  if (!text && !note.photo && !note.audio && !note.stop) {
     notes = notes.filter((item) => item.id !== id);
     await deleteNote(id);
   } else {
@@ -995,7 +1002,7 @@ function printableLines() {
   notes.forEach((note) => {
     lines.push(timeFormat.format(note.at));
     const written = visibleText(note);
-    wrapLine(written || (note.photo ? "Photograph taken" : ""), 78).forEach((line) => {
+    wrapLine(written || (note.photo ? "Photograph taken" : note.stop ? "Stop" : ""), 78).forEach((line) => {
       lines.push(line);
     });
     if (note.lat != null && note.lng != null) lines.push(formatPlace(note.lat, note.lng));
@@ -1167,6 +1174,33 @@ function rememberPin(note) {
   }).catch(showFailure);
 }
 
+function openNoteEditor(id) {
+  confirmingDeleteId = null;
+  editingId = id;
+  renderNotes();
+}
+
+async function saveStop() {
+  if (!round || round.endedAt) return;
+  const note = {
+    id: crypto.randomUUID(),
+    roundId: round.id,
+    text: "",
+    at: Date.now(),
+    photo: null,
+    audio: null,
+    pendingText: false,
+    stop: true,
+    ...pinFields(tracker.peek()),
+  };
+  notes.push(note);
+  await putNote(note);
+  renderNotes();
+  const saved = document.querySelector(`[data-note-id="${note.id}"]`);
+  if (saved) saved.scrollIntoView({ block: "nearest" });
+  rememberPin(note);
+}
+
 async function saveTypedNote(text) {
   const phrase = text.trim();
   if (!phrase || !round || round.endedAt) return;
@@ -1271,6 +1305,9 @@ async function transcribePending() {
   }
 }
 
+stopBtn.addEventListener("click", () => {
+  saveStop().catch(showFailure);
+});
 speakBtn.addEventListener("click", async () => {
   if (!round || round.endedAt) return;
   if (speech.listening() || recordingOffline || recorder.listening()) {
