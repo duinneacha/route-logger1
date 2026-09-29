@@ -50,6 +50,7 @@ let roundWrite = Promise.resolve();
 let startingRound = false;
 let geoStatus = "waiting";
 let routeDraft = "";
+let blockNewRound = false;
 let earlierStops = [];
 let earlierIndex = 0;
 let earlierFollowing = true;
@@ -361,7 +362,7 @@ function chosenRouteNumber() {
 }
 
 function syncStartEnabled() {
-  startBtn.disabled = !chosenRouteNumber();
+  startBtn.disabled = blockNewRound || !chosenRouteNumber();
 }
 
 function recentRouteNumbers(rounds) {
@@ -378,12 +379,11 @@ function recentRouteNumbers(rounds) {
 }
 
 function appendRouteField(rounds) {
-  if (startBtn.hidden) return;
   const wrap = document.createElement("form");
   wrap.className = "route-start";
   wrap.addEventListener("submit", (event) => {
     event.preventDefault();
-    if (!chosenRouteNumber()) return;
+    if (!chosenRouteNumber() || blockNewRound) return;
     beginRound().catch(showFailure);
   });
   const label = document.createElement("label");
@@ -468,7 +468,7 @@ async function showHome() {
   editingId = null;
   const rounds = await allRounds();
   const unfinished = rounds.find((item) => !item.endedAt);
-  if (unfinished) {
+  if (unfinished && routeKey(unfinished.routeNumber)) {
     await openExisting(unfinished);
     transcribePending();
     return;
@@ -479,29 +479,8 @@ async function showHome() {
   paintStatus();
   showDock("home");
   mainEl.replaceChildren();
-
-  const lead = document.createElement("p");
-  lead.className = "lead";
-  lead.textContent = "Type the route number, then start.";
-  mainEl.append(lead);
-  appendRouteField(rounds);
-
-  const finished = rounds.filter((item) => item.endedAt);
+  paintRouteHome(rounds, unfinished);
   transcribePending();
-  if (!finished.length) return;
-
-  const list = document.createElement("ul");
-  list.className = "round-list";
-  finished.forEach((item) => {
-    const li = document.createElement("li");
-    const button = document.createElement("button");
-    button.type = "button";
-    button.textContent = roundListLabel(item);
-    button.addEventListener("click", () => openExisting(item));
-    li.append(button);
-    list.append(li);
-  });
-  mainEl.append(list);
 }
 
 async function showRoundList() {
@@ -517,16 +496,27 @@ async function showRoundList() {
   titleEl.textContent = "Route notes";
   statusEl.textContent = rounds.length ? "Choose a round" : "No round yet";
   showDock("home");
-  startBtn.hidden = rounds.some((item) => !item.endedAt);
   mainEl.replaceChildren();
+  const unfinished = rounds.find((item) => !item.endedAt);
+  paintRouteHome(rounds, unfinished);
+}
 
+function paintRouteHome(rounds, unfinished) {
+  blockNewRound = Boolean(unfinished && routeKey(unfinished.routeNumber));
+  endBtn.hidden = !unfinished;
+  startBtn.hidden = false;
   const lead = document.createElement("p");
   lead.className = "lead";
-  lead.textContent = startBtn.hidden
-    ? "This round is still open."
-    : "Type the route number, then start.";
+  if (unfinished && routeKey(unfinished.routeNumber)) {
+    lead.textContent = "End this round before starting another.";
+  } else if (unfinished) {
+    lead.textContent = "Type the route number for this round.";
+  } else {
+    lead.textContent = "Type the route number, then start.";
+  }
   mainEl.append(lead);
   appendRouteField(rounds);
+  syncStartEnabled();
   if (!rounds.length) return;
 
   const list = document.createElement("ul");
@@ -565,11 +555,17 @@ async function beginRound() {
   tracker.start();
   try {
     const existing = (await allRounds()).find((item) => !item.endedAt);
+    const routeNumber = chosenRouteNumber();
     if (existing) {
+      if (!routeKey(existing.routeNumber) && routeNumber) {
+        round = existing;
+        round.routeNumber = routeNumber;
+        routeDraft = "";
+        await saveRound();
+      }
       await openExisting(existing);
       return;
     }
-    const routeNumber = chosenRouteNumber();
     if (!routeNumber) {
       tracker.stop();
       return;
@@ -596,6 +592,22 @@ async function beginRound() {
   } finally {
     startingRound = false;
   }
+}
+
+async function endOpenRound() {
+  const existing = (await allRounds()).find((item) => !item.endedAt);
+  if (!existing) {
+    await showRoundList();
+    return;
+  }
+  round = existing;
+  endTalk();
+  await phraseChain;
+  tracker.stop();
+  round.endedAt = Date.now();
+  await saveRound();
+  round = null;
+  await showRoundList();
 }
 
 async function finishRound() {
@@ -727,10 +739,37 @@ function renderEarlier() {
   if (!existing) mainEl.prepend(strip);
 }
 
+function renderRouteSetter() {
+  if (!round || round.endedAt || routeKey(round.routeNumber) || viewingExport) return;
+  const wrap = document.createElement("form");
+  wrap.className = "route-start";
+  wrap.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const number = wrap.querySelector("input").value.replace(/\s+/g, " ").trim().slice(0, 20);
+    if (!number || !round) return;
+    round.routeNumber = number;
+    titleEl.textContent = routeTitle(round);
+    saveRound().then(() => renderNotes()).catch(showFailure);
+  });
+  const label = document.createElement("label");
+  label.textContent = "Route number";
+  const field = document.createElement("input");
+  field.maxLength = 20;
+  field.autocomplete = "off";
+  field.enterKeyHint = "go";
+  field.setAttribute("aria-label", "Route number");
+  const save = document.createElement("button");
+  save.type = "submit";
+  save.textContent = "Save number";
+  wrap.append(label, field, save);
+  mainEl.append(wrap);
+}
+
 function renderNotes() {
   if (viewingExport) return;
   mainEl.replaceChildren();
   renderEarlier();
+  renderRouteSetter();
   if (!notes.length) {
     const empty = document.createElement("p");
     empty.className = "empty";
@@ -1334,7 +1373,13 @@ speakBtn.addEventListener("click", async () => {
 });
 
 startBtn.addEventListener("click", () => beginRound().catch(showFailure));
-endBtn.addEventListener("click", () => finishRound().catch(showFailure));
+endBtn.addEventListener("click", () => {
+  if (round && !round.endedAt) {
+    finishRound().catch(showFailure);
+    return;
+  }
+  endOpenRound().catch(showFailure);
+});
 backBtn.addEventListener("click", () => {
   if (!viewingExport || !round) return;
   openExisting(round).catch(showFailure);

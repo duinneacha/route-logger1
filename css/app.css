@@ -135,6 +135,15 @@ main {
   font: inherit;
 }
 
+.route-start button {
+  width: 100%;
+  min-height: 3.25rem;
+  margin-top: 0.7rem;
+  border: 2px solid var(--ink);
+  background: transparent;
+  font-weight: 700;
+}
+
 .route-picks {
   display: flex;
   flex-wrap: wrap;
